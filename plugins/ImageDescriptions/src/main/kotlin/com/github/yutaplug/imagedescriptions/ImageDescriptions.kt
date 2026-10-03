@@ -141,7 +141,7 @@ class ImageDescriptions : Plugin() {
                 }
                 val json = AttachmentMetadata.withUploads(buffer.D(), filenames, texts)
                 call.result = RequestBody.create(json, body.contentType())
-                logger.info("Encoded attachment descriptions in the message upload request")
+                logger.info("Encoded image descriptions in the message upload request")
             },
         )
     }
@@ -177,9 +177,10 @@ class ImageDescriptions : Plugin() {
                 val gson = call.args[0] as Gson
                 val json = AttachmentMetadata.withCloudUploads(gson.m(payload), texts)
                 call.args[1] = gson.f(json, JsonElement::class.java)
-                logger.info("Encoded attachment descriptions in Aliucord's cloud upload request")
+                logger.info("Encoded image descriptions in Aliucord's cloud upload request")
             },
         )
+        deoptimizeCloudUploadCallers()
         // Compression replaces both URI and ID. Transfer metadata in the actual completion callback.
         patcher.patch(
             SendUtils::class.java,
@@ -251,6 +252,31 @@ class ImageDescriptions : Plugin() {
                     }.toTypedArray()
             },
         )
+    }
+
+    /**
+     * Newer ART builds can inline the small executeWithJson call into UploadSize's send hook,
+     * which bypasses our hook. Run those callers interpreted so the hook always fires.
+     */
+    private fun deoptimizeCloudUploadCallers() {
+        val callers = mutableListOf<java.lang.reflect.Member>(
+            Http.Request::class.java.getDeclaredMethod("executeWithJson", Any::class.java),
+        )
+        for (kind in arrayOf("before", "instead")) {
+            var index = 1
+            while (true) {
+                val hook = try {
+                    Class.forName("com.aliucord.coreplugins.UploadSize\$start\$\$inlined\$$kind\$$index")
+                } catch (_: ClassNotFoundException) {
+                    break
+                }
+                hook.declaredMethods.filterTo(callers) { it.name.endsWith("HookedMethod") }
+                index++
+            }
+        }
+        for (caller in callers) {
+            if (!XposedBridge.deoptimizeMethod(caller)) logger.warn("Could not deoptimize $caller")
+        }
     }
 
     private fun patchMenu() {

@@ -5,7 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.View
-import android.widget.PopupMenu
+import androidx.fragment.app.FragmentActivity
 import com.aliucord.Utils
 import com.aliucord.annotations.AliucordPlugin
 import com.aliucord.entities.Plugin
@@ -23,7 +23,7 @@ class ReadAll : Plugin() {
     private val rows = WeakHashMap<View, Boolean>()
     private val adapters = WeakHashMap<WidgetGuildListAdapter, Boolean>()
     private val main = Handler(Looper.getMainLooper())
-    private var popup: PopupMenu? = null
+    private var sheet: ReadAllSheet? = null
     private var worker = Executors.newSingleThreadExecutor()
     private var busy = AtomicBoolean(false)
     @Volatile private var started = false
@@ -65,8 +65,7 @@ class ReadAll : Plugin() {
             }
         }
         if (commandMode) {
-            popup?.dismiss()
-            popup = null
+            dismissSheet()
             rows.keys.toList().forEach(::removeLongPress)
         }
         adapters.keys.toList().forEach { it.notifyDataSetChanged() }
@@ -77,22 +76,24 @@ class ReadAll : Plugin() {
         rows[row] = row.isLongClickable
         row.setOnLongClickListener {
             try {
-                popup?.dismiss()
-                val menu = PopupMenu(row.context, row)
-                menu.menu.add(if (settings.getBool(INCLUDE_DMS, false)) "Read all notifications" else "Read all server notifications")
-                menu.setOnMenuItemClickListener {
-                    readAll()
-                    true
+                dismissSheet()
+                val activity = row.context as? FragmentActivity ?: Utils.appActivity
+                sheet = ReadAllSheet().apply {
+                    label = if (settings.getBool(INCLUDE_DMS, false)) "Read All Notifications" else "Read All Server Notifications"
+                    onReadAll = { readAll() }
+                    show(activity.supportFragmentManager, SHEET_TAG)
                 }
-                menu.setOnDismissListener { if (popup === menu) popup = null }
-                menu.show()
-                popup = menu
                 true
             } catch (error: Throwable) {
-                logger.error("ReadAll could not open the DM icon menu", error)
+                logger.error("ReadAll could not open the DM icon sheet", error)
                 false
             }
         }
+    }
+
+    private fun dismissSheet() {
+        sheet?.takeIf { it.isAdded }?.dismissAllowingStateLoss()
+        sheet = null
     }
 
     private fun removeLongPress(row: View) {
@@ -170,8 +171,7 @@ class ReadAll : Plugin() {
         session++
         patcher.unpatchAll()
         commands.unregisterAll()
-        popup?.dismiss()
-        popup = null
+        dismissSheet()
         rows.keys.toList().forEach(::removeLongPress)
         rows.clear()
         adapters.clear()
@@ -184,5 +184,6 @@ class ReadAll : Plugin() {
         const val INCLUDE_DMS = "includeDMs"
         private const val FRIENDS_TYPE = 0
         private const val CLICK_DELAY_MS = 1_000L
+        private const val SHEET_TAG = "ReadAllSheet"
     }
 }

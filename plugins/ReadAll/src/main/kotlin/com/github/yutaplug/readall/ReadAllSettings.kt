@@ -18,7 +18,7 @@ class ReadAllSettings(private val settings: SettingsAPI, private val plugin: Rea
             context,
             CheckedSetting.ViewType.SWITCH,
             "Use /readall command",
-            "Replace the DM icon long press menu with one /readall command.",
+            "Replace the DM icon long press sheet with one /readall command.",
         ).apply {
             isChecked = settings.getBool(ReadAll.COMMAND_MODE, false)
             setOnCheckedListener { plugin.updateMode(it) }
