@@ -36,6 +36,7 @@ import com.google.android.material.button.MaterialButton
 import com.aliucord.Utils
 import com.discord.stores.StoreStream
 import com.discord.models.domain.emoji.ModelEmojiCustom
+import com.discord.models.domain.emoji.ModelEmojiUnicode
 import com.discord.utilities.color.ColorCompat
 import com.discord.views.CheckedSetting
 import com.facebook.drawee.view.SimpleDraweeView
@@ -340,7 +341,7 @@ internal class OnboardingScreen(
                     }
                 }
             }
-            val emoji = createEmojiView(option, 28)
+            val emoji = createEmojiView(option)
             if (emoji == null) {
                 content.addView(setting, LinearLayout.LayoutParams(-1, -2))
             } else {
@@ -356,7 +357,7 @@ internal class OnboardingScreen(
         }
     }
 
-    private fun createEmojiView(option: PromptOption, size: Int): View? {
+    private fun createEmojiView(option: PromptOption): View? {
         val id = option.emojiId
         if (id != null) {
             val uri = runCatching { ModelEmojiCustom.getImageUri(id, option.emojiAnimated, 64) }
@@ -370,11 +371,28 @@ internal class OnboardingScreen(
             }
         }
         if (!option.emojiName.hasVisibleText()) return null
-        return TextView(activity).apply {
-            text = option.emojiName
-            textSize = size.toFloat()
-            gravity = Gravity.CENTER
-            setTextColor(normal)
+        val name = option.emojiName
+        val unicode = StoreStream.getEmojis().unicodeEmojiSurrogateMap[name]
+            ?: StoreStream.getEmojis().unicodeEmojisNamesMap[name.trim(':')]
+        val surrogates = unicode?.surrogates ?: name
+        val codePoints = mutableListOf<String>()
+        var index = 0
+        while (index < surrogates.length) {
+            val codePoint = Character.codePointAt(surrogates, index)
+            codePoints += Integer.toHexString(codePoint)
+            index += Character.charCount(codePoint)
+        }
+        val nativeCodePoints = unicode?.codePoints ?: codePoints.joinToString("_")
+        val nativeUri = ModelEmojiUnicode.getImageUri(nativeCodePoints, activity)
+        // Newer emoji may not exist in 126.21's bundled Twemoji resources.
+        val uri = if (nativeUri != "res:///0") {
+            nativeUri
+        } else {
+            val assetCodePoints = if ("200d" in codePoints) codePoints else codePoints.filter { it != "fe0f" }
+            "https://cdn.jsdelivr.net/gh/jdecked/twemoji@17.0.3/assets/72x72/${assetCodePoints.joinToString("-")}.png"
+        }
+        return SimpleDraweeView(activity).apply {
+            setImageURI(uri)
             contentDescription = option.emojiName
         }
     }
@@ -413,7 +431,7 @@ internal class OnboardingScreen(
                     render()
                 } else choices[index] = checked
             }
-            val emoji = createEmojiView(option, 28)
+            val emoji = createEmojiView(option)
             if (emoji == null) {
                 list.addView(setting, LinearLayout.LayoutParams(-1, -2))
             } else {

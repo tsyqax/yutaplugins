@@ -1,9 +1,13 @@
-version = "1.0.4"
+version = "1.0.5"
 description = "Backports community onboarding and Channels & Roles to Discord 126.21."
 
 aliucord {
     changelog.set(
         """
+        # 1.0.5
+        * Re-add button to check onboarding
+        * Fix twemojis
+
         # 1.0.4
         * Add a Show All Channels toggle to the server sheet, synced with Browse Channels.
         * Fix saving Channels & Roles when initial onboarding is incomplete (Discord error 350002).
