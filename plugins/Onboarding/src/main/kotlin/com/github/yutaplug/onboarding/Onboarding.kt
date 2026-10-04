@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.View
+import android.view.LayoutInflater
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -19,6 +20,7 @@ import com.discord.api.guild.Guild as ApiGuild
 import com.discord.stores.StoreStream
 import com.discord.utilities.captcha.CaptchaHelper
 import com.discord.utilities.color.ColorCompat
+import com.discord.views.CheckedSetting
 import com.discord.utilities.mg_recycler.MGRecyclerAdapterSimple
 import com.discord.widgets.channels.list.WidgetChannelListModel
 import com.discord.widgets.channels.list.WidgetChannelsList
@@ -154,6 +156,32 @@ class Onboarding : Plugin() {
             sheet.dismiss()
             main.post { openScreen(activity, id, false) }
         }
+        ensureSheetAction(container, guildId, fontSource, CHECK_TAG, "Check Onboarding", 1) { row, id ->
+            checkOnboarding(sheet, id, row)
+        }
+        val toggle = container.findViewWithTag<CheckedSetting>(SHOW_ALL_TAG) ?: run {
+            val actions = LayoutInflater.from(container.context).inflate(
+                Utils.getResId("widget_guild_profile_actions", "layout"), null, false,
+            )
+            val row = actions.findViewById<CheckedSetting>(
+                Utils.getResId("guild_profile_sheet_hide_muted_channels", "id"),
+            )
+            (row.parent as ViewGroup).removeView(row)
+            row.id = View.NO_ID
+            row.tag = SHOW_ALL_TAG
+            row.setText("Show All Channels")
+            val identity = container.findViewById<View>(Utils.getResId("change_identity", "id"))
+            container.addView(row, if (identity != null) container.indexOfChild(identity) + 1 else 1)
+            buttons += WeakReference(row)
+            row
+        }
+        buttonGuilds[toggle] = guildId
+        toggle.visibility = View.VISIBLE
+        toggle.setOnCheckedListener(null)
+        toggle.isChecked = !isFiltered(guildId)
+        toggle.setOnCheckedListener { showAll ->
+            buttonGuilds[toggle]?.let { setFiltered(it, !showAll) }
+        }
     }
 
     private fun ensureSheetAction(
@@ -205,6 +233,65 @@ class Onboarding : Plugin() {
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         buttons += WeakReference(row)
         buttonGuilds[row] = guildId
+    }
+
+    private fun checkOnboarding(sheet: WidgetGuildProfileSheet, guildId: Long, row: TextView) {
+        if (!running || !row.isEnabled) return
+        val activity = sheet.activity ?: return
+        val requestedUserId = runCatching { StoreStream.getUsers().me.id }.getOrNull()
+        row.isEnabled = false
+        row.text = "Checking onboarding..."
+        val task = generation
+        worker.execute {
+            val result = runCatching {
+                val api = OnboardingApi(OnboardingApi.currentToken())
+                val config = api.getConfig(guildId)
+                val completed = if (config?.prompts?.any { it.inOnboarding } == true) {
+                    api.hasCompletedOnboarding(guildId)
+                } else {
+                    null
+                }
+                config to completed
+            }
+            main.post {
+                if (
+                    !running ||
+                    generation != task ||
+                    requestedUserId != runCatching { StoreStream.getUsers().me.id }.getOrNull()
+                ) {
+                    return@post
+                }
+                row.isEnabled = true
+                row.text = "Check Onboarding"
+                result
+                    .onSuccess { (config, completed) ->
+                        cached[guildId] = config
+                        cacheTime[guildId] = SystemClock.elapsedRealtime()
+                        refreshChannelLists()
+                        when {
+                            config == null -> {
+                                Utils.showToast("Discord returned no onboarding setup for this server")
+                            }
+
+                            completed == null -> {
+                                Utils.showToast("This server has no onboarding questions for joining")
+                            }
+
+                            completed -> {
+                                Utils.showToast("Onboarding is already complete")
+                            }
+
+                            else -> {
+                                sheet.dismiss()
+                                main.post { openScreen(activity, guildId, true) }
+                            }
+                        }
+                    }.onFailure { error ->
+                        logger.error("Could not check onboarding for guild $guildId", error)
+                        Utils.showToast(error.message ?: "Could not check onboarding")
+                    }
+            }
+        }
     }
 
     private fun fetchConfig(guildId: Long, onReady: ((OnboardingConfig?) -> Unit)? = null) {
@@ -347,6 +434,10 @@ class Onboarding : Plugin() {
     private fun setFiltered(guildId: Long, enabled: Boolean) {
         val userId = runCatching { StoreStream.getUsers().me.id }.getOrNull() ?: return
         settings.setBool("personalized_${userId}_$guildId", enabled)
+        buttons.forEach { reference ->
+            val toggle = reference.get() as? CheckedSetting ?: return@forEach
+            if (buttonGuilds[toggle] == guildId && toggle.isChecked == enabled) toggle.isChecked = !enabled
+        }
         refreshChannelLists()
     }
 
@@ -359,6 +450,7 @@ class Onboarding : Plugin() {
         buttons.forEach { reference ->
             reference.get()?.let { button ->
                 button.setOnClickListener(null)
+                (button as? CheckedSetting)?.setOnCheckedListener(null)
                 (button.parent as? ViewGroup)?.removeView(button)
             }
         }
@@ -395,6 +487,8 @@ class Onboarding : Plugin() {
 
     private companion object {
         const val CHANNELS_TAG = "onboarding_channels_and_roles"
+        const val CHECK_TAG = "onboarding_check"
+        const val SHOW_ALL_TAG = "onboarding_show_all_channels"
         const val RETRY_DELAY_MS = 30_000L
         const val CACHE_DURATION_MS = 300_000L
     }
